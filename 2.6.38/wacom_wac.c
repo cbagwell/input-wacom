@@ -1032,6 +1032,36 @@ static int wacom_bpt_irq(struct wacom_wac *wacom, size_t len)
 	return 0;
 }
 
+static int wacom_bpt_wireless_irq(struct wacom_wac *wacom, size_t len)
+{
+	unsigned char *data = wacom->data;
+	int connected;
+
+	if (len != WACOM_PKGLEN_WIRELESS)
+		return 0;
+
+	if (data[0] != 0x80)
+		return 0;
+
+	connected = data[1] & 0x01;
+	if (connected) {
+		int pid;
+
+		pid = get_unaligned_be16(&data[6]);
+		/* Connected with unknown PID */
+		if (wacom->pid != pid) {
+			wacom->pid = pid;
+			wacom_schedule_work(wacom);
+		}
+	} else if (wacom->pid != 0) {
+		/* Disconnected while previously connected */
+		wacom->pid = 0;
+		wacom_schedule_work(wacom);
+	}
+
+	return 0;
+}
+
 void wacom_wac_irq(struct wacom_wac *wacom_wac, size_t len)
 {
 	bool sync;
@@ -1080,6 +1110,10 @@ void wacom_wac_irq(struct wacom_wac *wacom_wac, size_t len)
 
 	case BAMBOO_PT:
 		sync = wacom_bpt_irq(wacom_wac, len);
+		break;
+
+	case BAMBOO_WIRELESS:
+		sync = wacom_bpt_wireless_irq(wacom_wac, len);
 		break;
 
 	default:
@@ -1143,7 +1177,7 @@ void wacom_setup_device_quirks(struct wacom_features *features)
 
 	/* these device have multiple inputs */
 	if (features->type == TABLETPC || features->type == TABLETPC2FG ||
-	    features->type == BAMBOO_PT)
+	    features->type == BAMBOO_PT || features->type == BAMBOO_WIRELESS)
 		features->quirks |= WACOM_QUIRK_MULTI_INPUT;
 
 	/* quirk for bamboo touch with 2 low res touches */
@@ -1154,6 +1188,12 @@ void wacom_setup_device_quirks(struct wacom_features *features)
 		features->x_fuzz <<= 5;
 		features->y_fuzz <<= 5;
 		features->quirks |= WACOM_QUIRK_BBTOUCH_LOWRES;
+	}
+
+	if (features->type == BAMBOO_WIRELESS) {
+		features->quirks |= WACOM_QUIRK_NO_INPUT;
+		if (!features->device_type)
+			features->quirks |= WACOM_QUIRK_MONITOR;
 	}
 }
 
@@ -1407,6 +1447,7 @@ void wacom_setup_input_capabilities(struct input_dev *input_dev,
 		}
 		break;
 	}
+
 }
 
 static const struct wacom_features wacom_features_0x00 =
@@ -1625,6 +1666,9 @@ static const struct wacom_features wacom_features_0xE6 =
 static const struct wacom_features wacom_features_0x47 =
 	{ "Wacom Intuos2 6x8",    WACOM_PKGLEN_INTUOS,    20320, 16240, 1023,
 	  31, INTUOS, WACOM_INTUOS_RES, WACOM_INTUOS_RES };
+static const struct wacom_features wacom_features_0x84 =
+        { "Wacom Wireless Module", WACOM_PKGLEN_WIRELESS, 0, 0, 0,
+          0, BAMBOO_WIRELESS, 0, 0 };
 static const struct wacom_features wacom_features_0xD0 =
 	{ "Wacom Bamboo 2FG",     WACOM_PKGLEN_BBFUN,     14720,  9200, 1023,
 	  31, BAMBOO_PT, WACOM_INTUOS_RES, WACOM_INTUOS_RES };
@@ -1751,6 +1795,7 @@ const struct usb_device_id wacom_ids[] = {
 	{ USB_DEVICE_DETAILED(0xCE, USB_CLASS_HID,
 			      USB_INTERFACE_SUBCLASS_BOOT,
 			      USB_INTERFACE_PROTOCOL_MOUSE) },
+	{ USB_DEVICE_WACOM(0x84) },
 	{ USB_DEVICE_WACOM(0xD0) },
 	{ USB_DEVICE_WACOM(0xD1) },
 	{ USB_DEVICE_WACOM(0xD2) },
